@@ -6,8 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'New release tag, such as tls-ech-tester-v2. Leave empty to test only.'
+      version:
+        description: 'SemVer version, such as 1.0.0 or 1.1.0-rc.1. Leave empty to test only.'
         required: false
         type: string
 
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.tag || github.event_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.version || github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 env:
@@ -28,6 +28,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      release_tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,20 +40,19 @@ jobs:
           go-version-file: .go-version
           cache: false
       - name: Validate release request
+        id: release
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "$RELEASE_TAG" ]]; then
+          bash .github/scripts/test-release-version.sh
+          if [[ -n "$RELEASE_VERSION" ]]; then
             [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main ]] || {
               echo 'Releases must be dispatched from main.' >&2
               exit 1
             }
-            [[ "$RELEASE_TAG" =~ ^tls-ech-tester-v[0-9]+(\.[0-9]+){0,2}$ ]] || {
-              echo 'Use a tag such as tls-ech-tester-v2 or tls-ech-tester-v2.1.0.' >&2
-              exit 1
-            }
+            bash .github/scripts/release-version.sh "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
           fi
       - name: Check and build all release binaries
         shell: bash
@@ -126,7 +128,7 @@ jobs:
 
   publish:
     needs: [build, test]
-    if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && needs.build.outputs.release_tag != '' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -143,7 +145,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
@@ -167,5 +170,7 @@ jobs:
             dist/tls-ech-tester-linux-amd64 dist/tls-ech-tester-linux-arm64 \
             dist/tls-ech-tester-windows-amd64.exe dist/tls-ech-tester-windows-arm64.exe \
             dist/SHA256SUMS \
-            --verify-tag --draft --title "$RELEASE_TAG" --notes-file release-notes.md
-          gh release edit "$RELEASE_TAG" --draft=false --latest
+            --verify-tag --draft --prerelease="$PRERELEASE" --title "$RELEASE_TAG" --notes-file release-notes.md
+          latest=true
+          [[ "$PRERELEASE" != true ]] || latest=false
+          gh release edit "$RELEASE_TAG" --draft=false --latest="$latest"

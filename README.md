@@ -119,27 +119,38 @@ pinned Go toolchain, then tests those exact binaries on native Linux, macOS, and
 Windows runners for both AMD64 and ARM64. Tests cover ECH acceptance,
 authenticated rejection, certificate trust, and invalid inputs.
 
+Releases follow [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
+The public interface consists of the documented commands, fixture files, stdout
+results, and exit statuses. Use a patch version for compatible fixes, a minor
+version for compatible additions, and a major version for breaking changes.
+Prerelease versions such as `1.1.0-rc.1` are marked as prereleases on GitHub and
+do not replace the latest stable release.
+
+The release version is entered when starting the workflow. `.go-version` selects
+only the Go compiler; changing it does not set the tool's release version.
+
 To publish a version:
 
 1. Merge the desired changes into `main`. Update `.go-version` when changing the
    compiler version.
 2. Open the workflow, select **Run workflow**, choose **main**, and enter a new
-   tag such as `tls-ech-tester-v2`. You can also start it from the CLI:
+   **version** such as `1.0.0`. You can also start it from the CLI:
 
    ```sh
    gh workflow run release.yml --repo nel/tls-ech-tester --ref main \
-     -f tag=tls-ech-tester-v2
+     -f version=1.0.0
    ```
 
 3. Wait for the workflow to finish. It publishes the six tested executables and
-   `SHA256SUMS`, and creates the tag at the exact commit tested by that run.
+   `SHA256SUMS`, and creates the corresponding tag (for example, `v1.0.0`) at
+   the exact commit tested by that run.
 
-Leaving the tag empty runs build and tests without publishing. A failed build
+Leaving the version empty runs build and tests without publishing. A failed build
 or test prevents publication. The publish job uses GitHub's built-in token;
 no extra release secret is required.
 
 Assets are attached to a draft before publication. Published releases are
-immutable, so use a new tag for subsequent changes. Existing tags are refused
+immutable, so use a new version for subsequent changes. Existing tags are refused
 to keep the release tied to the tested commit. If publication fails after tag
-creation, fix the failure and dispatch again with a new unused tag; delete any
+creation, fix the failure and dispatch again with a new unused version; delete any
 incomplete draft from the Releases page. Published releases are never replaced.
