@@ -1,5 +1,5 @@
-// Controlled TLS peer for the optional real-ECH regression. No DNS, CA-store,
-// firewall or resolver settings are changed. All keys are ephemeral in memory.
+// TLS Encrypted ClientHello test client and loopback server. All keys are
+// ephemeral in memory.
 package main
 
 import (
@@ -41,7 +41,7 @@ func run() error {
 		return runClient(os.Args[2], os.Args[3], os.Args[4])
 	}
 	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: ech-peer EXISTING_TEST_DIRECTORY | ech-peer client ADDRESS DIRECTORY ROOT_DER_PATH")
+		return fmt.Errorf("usage: tls-ech-tester EXISTING_TEST_DIRECTORY | tls-ech-tester client ADDRESS DIRECTORY ROOT_DER_PATH")
 	}
 	dir := os.Args[1]
 	write := func(name string, data []byte) error {
@@ -84,7 +84,7 @@ func run() error {
 		return err
 	}
 	defer listener.Close()
-	// A lost Rust owner cannot leave a permanent listener behind.
+	// Bound the listener lifetime if a test harness exits without stopping it.
 	time.AfterFunc(60*time.Second, func() { listener.Close() })
 	for name, data := range map[string][]byte{"cert.der": der, "ech.bin": list, "count": []byte("0")} {
 		if err := write(name, data); err != nil {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Maintainer operation only; normal development uses the prebuilt release.
+# Build the six release executables and their checksum manifest.
 set -euo pipefail
 go_bin="${1:?Usage: bash build-release.sh /path/to/go output-directory}"
 output="${2:?Output directory required}"
@@ -14,7 +14,7 @@ sha256() {
 printf '%s  main.go\n' "$(sha256 "$source_file")" > "$output/SHA256SUMS"
 for system in darwin linux windows; do
     for arch in amd64 arm64; do
-        name="ech-peer-$system-$arch"
+        name="tls-ech-tester-$system-$arch"
         [[ "$system" != windows ]] || name="$name.exe"
         GOOS="$system" GOARCH="$arch" "$go_bin" build -trimpath -buildvcs=false \
             '-ldflags=-s -w -buildid=' -o "$output/$name" "$source_file"

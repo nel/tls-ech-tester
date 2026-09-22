@@ -1,9 +1,9 @@
-# ech-peer
+# tls-ech-tester
 
-`ech-peer` is a small TLS 1.3 server and client for testing Encrypted ClientHello
-(ECH). It provides a local ECH-capable endpoint and reports whether a connection
-accepted ECH, rejected it with an authenticated response, or failed certificate
-trust verification.
+A command-line client and server for testing TLS Encrypted ClientHello (ECH).
+It provides a local ECH-capable endpoint and reports whether a connection accepted
+ECH, rejected it with an authenticated response, or failed certificate trust
+verification.
 
 It uses only Go's standard library. The server generates fresh certificate and
 ECH keys on each launch, keeps private keys in memory, and listens on loopback.
@@ -12,25 +12,25 @@ and network-filter tests.
 
 ## Download
 
-Download the executable for your platform from [Releases](https://github.com/nel/ech-peer/releases):
+Download the executable for your platform from [Releases](https://github.com/nel/tls-ech-tester/releases):
 
 | Platform | AMD64 | ARM64 |
 | --- | --- | --- |
-| macOS | `ech-peer-darwin-amd64` | `ech-peer-darwin-arm64` |
-| Linux | `ech-peer-linux-amd64` | `ech-peer-linux-arm64` |
-| Windows | `ech-peer-windows-amd64.exe` | `ech-peer-windows-arm64.exe` |
+| macOS | `tls-ech-tester-darwin-amd64` | `tls-ech-tester-darwin-arm64` |
+| Linux | `tls-ech-tester-linux-amd64` | `tls-ech-tester-linux-arm64` |
+| Windows | `tls-ech-tester-windows-amd64.exe` | `tls-ech-tester-windows-arm64.exe` |
 
 Verify the download against the release's `SHA256SUMS`. On macOS and Linux,
 make the file executable with `chmod +x`. The examples below assume the binary
-is named `ech-peer` and is on your `PATH`.
+is named `tls-ech-tester` and is on your `PATH`.
 
 ## Server
 
 Create an empty directory and start the server:
 
 ```sh
-mkdir peer-state
-ech-peer peer-state
+mkdir test-state
+tls-ech-tester test-state
 ```
 
 The server writes these files into the directory:
@@ -58,13 +58,13 @@ ECH accepted=true name=override.example.test
 While the server is running, use another terminal to connect:
 
 ```sh
-ech-peer client "$(cat peer-state/ready)" peer-state peer-state/cert.der
+tls-ech-tester client "$(cat test-state/ready)" test-state test-state/cert.der
 ```
 
 The command syntax is:
 
 ```text
-ech-peer client IP:PORT DIRECTORY ROOT_DER_PATH
+tls-ech-tester client IP:PORT DIRECTORY ROOT_DER_PATH
 ```
 
 The client reads `ech.bin` and `cert.der` from `DIRECTORY`, uses
@@ -88,8 +88,7 @@ name. Other failures, including rejection with a nonempty retry configuration,
 exit nonzero and write a diagnostic to stderr.
 
 The client does not retry after ECH rejection. The names, cipher configuration,
-and application exchange are fixed; this is a controlled test peer rather than
-a general-purpose HTTPS client or server.
+and application exchange are fixed to keep test results deterministic.
 
 ## Build
 
@@ -103,6 +102,5 @@ The script builds all six targets with `CGO_ENABLED=0`, `-trimpath`,
 `-buildvcs=false`, and `-ldflags=-s -w -buildid=`, and writes a `SHA256SUMS` file
 covering the source and binaries.
 
-macOS ARM64 and Windows ARM64 have been tested at runtime. The other four
-targets have been cross-compiled only. Publish source or toolchain changes
-under a new release tag so existing checksum pins remain valid.
+Publish source or toolchain changes under a new release tag so existing checksum
+pins remain valid.
