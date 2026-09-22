@@ -1,0 +1,168 @@
+name: Build, test, and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'New release tag, such as tls-ech-tester-v2. Leave empty to test only.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.tag || github.event_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+env:
+  GOTOOLCHAIN: local
+  GOPROXY: 'off'
+  GOSUMDB: 'off'
+  CGO_ENABLED: '0'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Validate release request
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$RELEASE_TAG" ]]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main ]] || {
+              echo 'Releases must be dispatched from main.' >&2
+              exit 1
+            }
+            [[ "$RELEASE_TAG" =~ ^tls-ech-tester-v[0-9]+(\.[0-9]+){0,2}$ ]] || {
+              echo 'Use a tag such as tls-ech-tester-v2 or tls-ech-tester-v2.1.0.' >&2
+              exit 1
+            }
+          fi
+      - name: Check and build all release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l main.go main_test.go)"
+          go vet main.go main_test.go
+          bash build-release.sh "$(command -v go)" dist
+          cp main.go dist/main.go
+          (cd dist && sha256sum --check SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-binaries
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    needs: build
+    name: Test ${{ matrix.os }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, os: linux, arch: amd64, go_arch: x64, suffix: '' }
+          - { runner: ubuntu-24.04-arm, os: linux, arch: arm64, go_arch: arm64, suffix: '' }
+          - { runner: macos-15-intel, os: darwin, arch: amd64, go_arch: x64, suffix: '' }
+          - { runner: macos-15, os: darwin, arch: arm64, go_arch: arm64, suffix: '' }
+          - { runner: windows-2025, os: windows, arch: amd64, go_arch: x64, suffix: '.exe' }
+          - { runner: windows-11-arm, os: windows, arch: arm64, go_arch: arm64, suffix: '.exe' }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          architecture: ${{ matrix.go_arch }}
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-binaries
+          path: dist/
+      - name: Verify and test the release executable
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_SUFFIX: ${{ matrix.suffix }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(go env GOHOSTOS)" == "$TARGET_OS" ]]
+          [[ "$(go env GOHOSTARCH)" == "$TARGET_ARCH" ]]
+          cmp main.go dist/main.go
+          (
+            cd dist
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum --check SHA256SUMS
+            else
+              shasum -a 256 --check SHA256SUMS
+            fi
+          )
+          binary="$PWD/dist/tls-ech-tester-$TARGET_OS-$TARGET_ARCH$TARGET_SUFFIX"
+          chmod +x "$binary"
+          if [[ "$TARGET_OS" == windows ]]; then
+            binary="$(cygpath -w "$binary")"
+          fi
+          TLS_ECH_TESTER_BINARY="$binary" go test -v -count=1 -timeout=2m main.go main_test.go
+
+  publish:
+    needs: [build, test]
+    if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-binaries
+          path: dist/
+      - name: Publish tested artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp main.go dist/main.go
+          (cd dist && sha256sum --check SHA256SUMS)
+          cat > release-notes.md <<EOF_NOTES
+          A command-line client and server for testing TLS Encrypted ClientHello (ECH).
+
+          Built from commit $GITHUB_SHA with Go $(cat .go-version).
+          All six published binaries passed native integration tests on Linux, macOS, and Windows (AMD64 and ARM64).
+          Download the executable for your platform and verify it against SHA256SUMS.
+
+          [Usage](https://github.com/$GH_REPO/blob/$GITHUB_SHA/README.md)
+          EOF_NOTES
+          # Atomic creation refuses an existing tag, even if it has no release.
+          gh api --method POST "repos/$GH_REPO/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" > /dev/null
+          gh release create "$RELEASE_TAG" \
+            dist/tls-ech-tester-darwin-amd64 dist/tls-ech-tester-darwin-arm64 \
+            dist/tls-ech-tester-linux-amd64 dist/tls-ech-tester-linux-arm64 \
+            dist/tls-ech-tester-windows-amd64.exe dist/tls-ech-tester-windows-arm64.exe \
+            dist/SHA256SUMS \
+            --verify-tag --draft --title "$RELEASE_TAG" --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

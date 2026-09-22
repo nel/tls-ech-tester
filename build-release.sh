@@ -3,9 +3,11 @@
 set -euo pipefail
 go_bin="${1:?Usage: bash build-release.sh /path/to/go output-directory}"
 output="${2:?Output directory required}"
-source_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/main.go"
+source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_file="$source_dir/main.go"
+go_version="$(<"$source_dir/.go-version")"
 export GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off CGO_ENABLED=0
-[[ "$("$go_bin" version)" == 'go version go1.27.1 '* ]] || { echo "Go 1.27.1 required" >&2; exit 1; }
+[[ "$("$go_bin" version)" == "go version go$go_version "* ]] || { echo "Go $go_version required" >&2; exit 1; }
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 sha256() {

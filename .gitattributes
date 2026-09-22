@@ -1,3 +1,4 @@
 main.go text eol=lf
 build-release.sh text eol=lf
-SHA256SUMS text eol=lf
+main_test.go text eol=lf
+.go-version text eol=lf
