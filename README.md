@@ -1,34 +1,79 @@
 # ech-peer
 
-`ech-peer` is a small test-only Go standard-library TLS server and client used
-by Hoplum's encrypted ClientHello integration tests. It is not a production
-dependency, DNS resolver, browser automation tool, or replacement TLS
-implementation.
+`ech-peer` is a small TLS 1.3 server and client for testing Encrypted ClientHello
+(ECH). It provides a local ECH-capable endpoint and reports whether a connection
+accepted ECH, rejected it with an authenticated response, or failed certificate
+trust verification.
 
-The peer accepts loopback TCP connections on a random port and writes only its
-public certificate, ECH configuration, readiness address, and accepted
-connection count to the caller-owned directory. Start it with a new, private
-directory:
+It uses only Go's standard library. The server generates fresh certificate and
+ECH keys on each launch, keeps private keys in memory, and listens on loopback.
+The fixed names and bounded protocol make it useful for automated TLS, proxy,
+and network-filter tests.
+
+## Download
+
+Download the executable for your platform from [Releases](https://github.com/nel/ech-peer/releases):
+
+| Platform | AMD64 | ARM64 |
+| --- | --- | --- |
+| macOS | `ech-peer-darwin-amd64` | `ech-peer-darwin-arm64` |
+| Linux | `ech-peer-linux-amd64` | `ech-peer-linux-arm64` |
+| Windows | `ech-peer-windows-amd64.exe` | `ech-peer-windows-arm64.exe` |
+
+Verify the download against the release's `SHA256SUMS`. On macOS and Linux,
+make the file executable with `chmod +x`. The examples below assume the binary
+is named `ech-peer` and is on your `PATH`.
+
+## Server
+
+Create an empty directory and start the server:
 
 ```sh
-ech-peer DIRECTORY
+mkdir peer-state
+ech-peer peer-state
 ```
 
-`DIRECTORY` receives `cert.der`, `ech.bin`, `ready`, and `count`. The process
-listens only on the loopback address reported by `ready`, expires after 60
-seconds, and refreshes `count` after each accepted connection.
+The server writes these files into the directory:
 
-Client mode uses stock Go TLS certificate and ECH rejection verification:
+| File | Contents |
+| --- | --- |
+| `cert.der` | Self-signed DER certificate for `example.test` and `override.example.test` |
+| `ech.bin` | Binary ECHConfigList for the generated key |
+| `ready` | Listening address, in `127.0.0.1:PORT` form |
+| `count` | Number of accepted TCP connections, including failed TLS handshakes |
+
+Wait for `ready` before connecting. The server handles connections serially,
+with a three-second deadline per connection and a 60-second listener lifetime.
+Test harnesses should terminate it when finished; expiration closes the
+listener and exits with an error.
+
+After a successful TLS handshake, sending `PING` returns a line such as:
+
+```text
+ECH accepted=true name=override.example.test
+```
+
+## Client
+
+While the server is running, use another terminal to connect:
 
 ```sh
+ech-peer client "$(cat peer-state/ready)" peer-state peer-state/cert.der
+```
+
+The command syntax is:
+
+```text
 ech-peer client IP:PORT DIRECTORY ROOT_DER_PATH
 ```
 
-The numeric address avoids DNS. `DIRECTORY` must contain the server's existing
-`cert.der` and `ech.bin`; `ROOT_DER_PATH` is the client's only trust root. Each
-input is a nonempty regular file no larger than 64 KiB. The client uses
-`override.example.test` as the inner name, a five-second deadline, and emits
-exactly one recognized stdout result:
+The client reads `ech.bin` and `cert.der` from `DIRECTORY`, uses
+`override.example.test` as the inner server name, and trusts only the DER
+certificate at `ROOT_DER_PATH`. It connects to a numeric IP address without DNS,
+with a five-second deadline covering the connection and exchange. Input files
+must be nonempty regular files no larger than 64 KiB.
+
+The client prints one of these results:
 
 ```text
 ECH_CLIENT_RESULT status=accepted ech_accepted=true
@@ -36,28 +81,28 @@ ECH_CLIENT_RESULT status=rejected retry_config_bytes=0
 ECH_CLIENT_RESULT status=certificate-untrusted
 ```
 
-Recognized results exit zero so the caller can assert the expected outcome.
-All other errors, including nonempty retry configurations, exit nonzero with
-bounded diagnostics on stderr.
+All three recognized outcomes exit zero so a test harness can assert the
+expected result. Acceptance requires the exact server certificate and expected
+`PING` response. Rejection uses Go's certificate verification for the public
+name. Other failures, including rejection with a nonempty retry configuration,
+exit nonzero and write a diagnostic to stderr.
 
-## Release builds
+The client does not retry after ECH rejection. The names, cipher configuration,
+and application exchange are fixed; this is a controlled test peer rather than
+a general-purpose HTTPS client or server.
 
-Release `ech-peer-v1` was imported byte-for-byte from the private
-`nel/hoplum-agent` release of the same name. Its source was originally committed
-as `tests/ech-peer/main.go` at Hoplum commit
-`5d6cb480ae78755682f73cdf81f00fb091a190e4`. The imported `main.go` SHA-256 is
-`6938d73dd946b835a0d719aeb9a5cfb83bb5bd5c01293c076cbd22d00d9be1d5`.
+## Build
 
-The six v1 binaries were built locally with Go 1.27.1, `CGO_ENABLED=0`,
-`-trimpath`, `-buildvcs=false`, and `-ldflags=-s -w -buildid=`. macOS ARM64 and
-Windows ARM64 were runtime-qualified in Hoplum; the other four targets were
-cross-compiled only. `SHA256SUMS` pins both the source and every released asset.
-
-To reproduce a future release with the pinned toolchain:
+Release builds use Go 1.27.1 with no third-party dependencies:
 
 ```sh
 bash build-release.sh /path/to/go output-directory
 ```
 
-Choose a new immutable release tag for any source or toolchain change. Never
-replace assets already consumed by another repository.
+The script builds all six targets with `CGO_ENABLED=0`, `-trimpath`,
+`-buildvcs=false`, and `-ldflags=-s -w -buildid=`, and writes a `SHA256SUMS` file
+covering the source and binaries.
+
+macOS ARM64 and Windows ARM64 have been tested at runtime. The other four
+targets have been cross-compiled only. Publish source or toolchain changes
+under a new release tag so existing checksum pins remain valid.
